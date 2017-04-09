@@ -1,15 +1,14 @@
-import requests
-import time
-import os
 import datetime
-import webbrowser
-
+import os
 import threading
-from detect_peaks import detect_peaks
+import time
+import webbrowser
+import requests
 
 from tkinter import *
 from tkinter import filedialog
 
+from detect_peaks import detect_peaks
 
 class TwitchChatGetThread(threading.Thread):
     """
@@ -241,6 +240,11 @@ class TwitchChatCounterUI:
 
         self.add_top_chat_count_log(sorted_list)
         self.add_local_peaks_log(ordered_list)
+
+        with open(self.save_directory + '/' + self.current_video_id + '_log.txt', 'w') as file:
+            file.write('\n'.join(self.console_listbox.get(0, END)))
+            file.write('\n')
+
 
     def add_top_chat_count_log(self, sorted_list):
         top_range = min(20, len(sorted_list))
