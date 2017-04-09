@@ -4,6 +4,7 @@ import threading
 import time
 import webbrowser
 import requests
+import statistics
 
 from tkinter import *
 from tkinter import filedialog
@@ -79,7 +80,13 @@ class TwitchChatGetThread(threading.Thread):
             os.makedirs(self.save_dir)
 
         # Open file
-        file = open(self.save_dir + '/' + self.video_id + '.csv', 'w')
+        try:
+            file = open(self.save_dir + '/' + self.video_id + '.csv', 'w')
+        except Exception:
+            self.ui.add_log('Cannot create file ' + self.save_dir + '/' + self.video_id + '.csv')
+            self.ui.thread_finished()
+            return
+
         file.write('Timestamp, Count\n')
 
         # Download messages from timestamps between start and stop.
@@ -232,11 +239,13 @@ class TwitchChatCounterUI:
         self.get_thread.stop_thread()
         self.start_button.configure(text="Start")
 
-
-    def thread_finished(self, ordered_list, sorted_list):
+    def thread_finished(self, ordered_list=[], sorted_list=[]):
         self.is_running = False
-        self.add_log("Finished!")
         self.start_button.configure(text="Start")
+        if len(ordered_list) == 0:
+            return
+
+        self.add_log("Finished!")
 
         self.add_top_chat_count_log(sorted_list)
         self.add_local_peaks_log(ordered_list)
@@ -271,7 +280,11 @@ class TwitchChatCounterUI:
         for item in ordered_list:
             count_list.append(item['count'])
 
-        peaks_list = detect_peaks(count_list, mph=50, mpd=10)
+        mean = statistics.mean(count_list)
+        stdev = statistics.stdev(count_list)
+        self.add_log('Mean=' + str(mean) + ', SD=' + str(stdev))
+
+        peaks_list = detect_peaks(count_list, mph=(mean+stdev), mpd=10)
         for i in range(len(peaks_list)):
             peak_index = peaks_list[i]
             chat_count = ordered_list[peak_index]['count']
