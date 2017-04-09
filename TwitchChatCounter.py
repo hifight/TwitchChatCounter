@@ -5,6 +5,7 @@ import datetime
 import webbrowser
 
 import threading
+from detect_peaks import detect_peaks
 
 from tkinter import *
 from tkinter import filedialog
@@ -13,7 +14,7 @@ from tkinter import filedialog
 class TwitchChatGetThread(threading.Thread):
     """
     Chat count getter thread
-    Modified version of Twitch-Chat-Downloader from PetterKraabol
+    Modified version of Twitch-Chat-Downloader by PetterKraabol
     https://github.com/PetterKraabol/Twitch-Chat-Downloader
     """
     def __init__(self, ui, save_dir, video_id):
@@ -22,6 +23,9 @@ class TwitchChatGetThread(threading.Thread):
         self.save_dir = save_dir
         self.video_id = video_id
         self.chat_api_url = 'https://rechat.twitch.tv/rechat-messages'
+        # Data list ordered by timestamp
+        self.ordered_list = []
+        # Data list ordered by count
         self.sorted_list = []
         self.stop_flag = False
         self.daemon = True
@@ -86,7 +90,12 @@ class TwitchChatGetThread(threading.Thread):
             # Wait for cooldown timer and request new messages from Twitch
             # The API returns the next 30 seconds of messages
             time.sleep(0.5)
-            response = self.request_rechat(timestamp, self.video_id).json()
+            try:
+                response = self.request_rechat(timestamp, self.video_id).json()
+            except:
+                self.ui.add_log("Cannot get data from Twitch API")
+                self.ui.add_log("Retrying...")
+                continue
             data = response['data'];
 
             current_relative_time = timestamp - self.original_start
@@ -97,7 +106,9 @@ class TwitchChatGetThread(threading.Thread):
             line = relativeTimeStamp + ',' + str(chat_count) + '\n'
             file.write(line)
 
-            self.insert_sorted_list(chat_count, relativeTimeStamp)
+            new_data = self.create_data(chat_count, relativeTimeStamp)
+            self.ordered_list.append(new_data)
+            self.insert_sorted_list(new_data)
 
             # Add log
             percentage = '{0:.0%}'.format(current_relative_time / self.full_range)
@@ -110,15 +121,22 @@ class TwitchChatGetThread(threading.Thread):
             if self.stop_flag:
                 break
 
-        self.ui.thread_finished(self.sorted_list)
+        # Callback to ui
+        self.ui.thread_finished(self.ordered_list, self.sorted_list)
 
-    def insert_sorted_list(self, chat_count, timestamp):
+    def create_data(self, chat_count, timestamp):
+        return {'count': chat_count, 'timestamp': timestamp}
+
+    def insert_sorted_list(self, data):
+        """
+        Insert new entry to sorted list
+        """
         for i in range(len(self.sorted_list)):
-            if chat_count > self.sorted_list[i]['count']:
-                self.sorted_list.insert(i, {'count': chat_count, 'timestamp': timestamp})
+            if data['count'] > self.sorted_list[i]['count']:
+                self.sorted_list.insert(i, data)
                 return
 
-        self.sorted_list.append({'count': chat_count, 'timestamp': timestamp})
+        self.sorted_list.append(data)
 
     def request_rechat(self, start_time, video_id):
         return requests.get(self.create_rechat_get_url(start_time, video_id))
@@ -181,6 +199,9 @@ class TwitchChatCounterUI:
         self.console_link = {}
 
     def on_select_list(self, event):
+        if self.is_running:
+            return
+
         w = event.widget
         index = int(w.curselection()[0])
         if index == self.last_selected_index:
@@ -213,13 +234,17 @@ class TwitchChatCounterUI:
         self.start_button.configure(text="Start")
 
 
-    def thread_finished(self, sorted_list):
+    def thread_finished(self, ordered_list, sorted_list):
         self.is_running = False
         self.add_log("Finished!")
         self.start_button.configure(text="Start")
 
+        self.add_top_chat_count_log(sorted_list)
+        self.add_local_peaks_log(ordered_list)
+
+    def add_top_chat_count_log(self, sorted_list):
         top_range = min(20, len(sorted_list))
-        self.add_log('Top ' + top_range + ' Chat Count')
+        self.add_log('Top ' + str(top_range) + ' Chat Count')
         for i in range(top_range):
             print(sorted_list[i])
             chat_count = sorted_list[i]['count']
@@ -231,6 +256,29 @@ class TwitchChatCounterUI:
             minute = timestamp_split[1] + 'm'
             second = timestamp_split[2] + 's'
             self.console_link[str(index)] = 'https://www.twitch.tv/videos/' + self.current_video_id + '?t=' + hour + minute + second
+
+    def add_local_peaks_log(self, ordered_list):
+
+        self.add_log('-----------------------------')
+        self.add_log('Local Peaks List')
+
+        # Get ordered count list
+        count_list = []
+        for item in ordered_list:
+            count_list.append(item['count'])
+
+        peaks_list = detect_peaks(count_list, mph=50, mpd=10)
+        for i in range(len(peaks_list)):
+            peak_index = peaks_list[i]
+            chat_count = ordered_list[peak_index]['count']
+            timestamp = ordered_list[peak_index]['timestamp']
+            console_index = self.add_log(str(i + 1) + '. Count=' + str(chat_count) + " timestamp=" + timestamp)
+
+            timestamp_split = timestamp.split(':')
+            hour = timestamp_split[0] + 'h'
+            minute = timestamp_split[1] + 'm'
+            second = timestamp_split[2] + 's'
+            self.console_link[str(console_index)] = 'https://www.twitch.tv/videos/' + self.current_video_id + '?t=' + hour + minute + second
 
     def add_log(self, text):
         self.console_listbox.insert(END, text)
